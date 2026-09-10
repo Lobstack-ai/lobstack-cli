@@ -1,0 +1,13 @@
+{
+  "name": "lobstack",
+  "version": "0.1.0",
+  "description": "The Lobstack Gateway from your terminal: one key, every model, and what each call cost.",
+  "type": "module",
+  "bin": { "lobstack": "./src/index.mjs" },
+  "files": ["src", "README.md"],
+  "engines": { "node": ">=20" },
+  "keywords": ["llm", "gateway", "openai", "anthropic", "proxy", "cli", "lobstack"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Lobstack-ai/lobstack.git", "directory": "cli" },
+  "homepage": "https://www.lobstack.ai/docs/cli"
+}
