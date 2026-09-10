@@ -53,6 +53,24 @@ test('streams the answer and prints the receipt the gateway sent', async () => {
   }
 });
 
+test('will not call a plan-ceiling comparison a saving', async () => {
+  // `auto` has no model the caller named, so the gateway measures against the
+  // most expensive model the plan allows. That is a real comparison and it is
+  // not the same claim, so the CLI must not print it as "saved" -- which is
+  // exactly what it did before `baseline_reason` existed.
+  const gw = await startFakeGateway({ ceilingBaseline: true });
+  try {
+    const { stderr } = await invoke(['chat', 'hi', '--base', gw.url]);
+    assert.match(stderr, /vs ceiling/);
+    assert.doesNotMatch(stderr, /saved/);
+    // And it names the model it measured against, plus why.
+    assert.match(stderr, /claude-fable-5-1/);
+    assert.match(stderr, /you sent auto/);
+  } finally {
+    gw.close();
+  }
+});
+
 test('the answer goes to stdout and the receipt to stderr', async () => {
   const gw = await startFakeGateway();
   try {

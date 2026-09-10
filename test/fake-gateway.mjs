@@ -27,11 +27,17 @@ const FRAMES = [
       cost_usd: 0.0011,
       savings_usd: 0.0044,
       priced: true,
+      // A named baseline: the caller asked for opus-5 and the router served
+      // haiku. That is the like-for-like case, and it is the only one the CLI
+      // is allowed to print the word "saved" next to.
+      baseline_reason: 'named',
+      baseline_model: 'claude-opus-5',
+      baseline_cost_usd: 0.0055,
     },
   },
 ];
 
-export function startFakeGateway({ unpriced = false } = {}) {
+export function startFakeGateway({ unpriced = false, ceilingBaseline = false } = {}) {
   const server = createServer(async (req, res) => {
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer lsk_')) {
@@ -66,11 +72,25 @@ export function startFakeGateway({ unpriced = false } = {}) {
     }
 
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    const frames = FRAMES.map((f) =>
-      unpriced && f.x_lobstack
-        ? { ...f, x_lobstack: { ...f.x_lobstack, cost_usd: null, savings_usd: null, priced: false } }
-        : f,
-    );
+    const frames = FRAMES.map((f) => {
+      if (!f.x_lobstack) return f;
+      if (unpriced) {
+        return { ...f, x_lobstack: { ...f.x_lobstack, cost_usd: null, savings_usd: null, priced: false } };
+      }
+      if (ceilingBaseline) {
+        // Nobody asked for the baseline model here. The receipt has to say so.
+        return {
+          ...f,
+          x_lobstack: {
+            ...f.x_lobstack,
+            requested_model: 'auto',
+            baseline_reason: 'plan_ceiling',
+            baseline_model: 'claude-fable-5-1',
+          },
+        };
+      }
+      return f;
+    });
     const text = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join('') + 'data: [DONE]\n\n';
 
     // Cut mid-frame. Whole-frame writes would never exercise the buffer.

@@ -31,12 +31,24 @@ export function printReceipt({ receipt, usage, model }) {
   if (usage) parts.push(`${dim('tokens')} ${usage.prompt_tokens}/${usage.completion_tokens}`);
   parts.push(`${dim('cost')} ${money(receipt?.cost_usd)}`);
 
+  // `baseline_reason` decides whether this number may be called a saving.
+  // "named" means the caller asked for a model and got something cheaper --
+  // a like-for-like comparison. "plan_ceiling" means they sent `auto` and the
+  // gateway measured against the most expensive model their plan allows, which
+  // is a real comparison but not one they asked for. Printing the two
+  // identically is the overstatement the receipt exists to prevent.
   if (typeof receipt?.savings_usd === 'number' && receipt.savings_usd > 0) {
-    parts.push(`${dim('saved')} ${green(money(receipt.savings_usd))}`);
+    const named = receipt.baseline_reason === 'named';
+    parts.push(`${dim(named ? 'saved' : 'vs ceiling')} ${green(money(receipt.savings_usd))}`);
   }
 
   process.stderr.write('\n' + dim('- ') + parts.join(dim('  -  ')) + '\n');
 
+  if (receipt?.baseline_reason === 'plan_ceiling' && receipt.baseline_model) {
+    process.stderr.write(
+      dim(`  measured against ${receipt.baseline_model}, the priciest model your plan allows - you sent auto, not that model\n`),
+    );
+  }
   if (receipt && receipt.priced === false) {
     process.stderr.write(dim('  the gateway could not price this model, so no cost is claimed\n'));
   }

@@ -66,8 +66,11 @@ function logReceipt(started, { receipt, usage }) {
   const parts = [`${dim('model')} ${receipt?.served_model ?? '?'}`];
   if (usage) parts.push(`${dim('tokens')} ${usage.prompt_tokens}/${usage.completion_tokens}`);
   parts.push(`${dim('cost')} ${money(receipt?.cost_usd)}`);
+  // See render.mjs: a plan-ceiling baseline is not a like-for-like saving and
+  // must not be printed as one.
   if (typeof receipt?.savings_usd === 'number' && receipt.savings_usd > 0) {
-    parts.push(`${dim('saved')} ${green(money(receipt.savings_usd))}`);
+    const named = receipt.baseline_reason === 'named';
+    parts.push(`${dim(named ? 'saved' : 'vs ceiling')} ${green(money(receipt.savings_usd))}`);
   }
   parts.push(`${dim('in')} ${ms}ms`);
   process.stderr.write(dim('- ') + parts.join(dim('  -  ')) + '\n');
