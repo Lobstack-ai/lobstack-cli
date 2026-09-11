@@ -8,6 +8,6 @@
   "engines": { "node": ">=20" },
   "keywords": ["llm", "gateway", "openai", "anthropic", "proxy", "cli", "lobstack"],
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Lobstack-ai/lobstack.git", "directory": "cli" },
+  "repository": { "type": "git", "url": "https://github.com/Lobstack-ai/lobstack-cli.git" },
   "homepage": "https://www.lobstack.ai/docs/cli"
 }
