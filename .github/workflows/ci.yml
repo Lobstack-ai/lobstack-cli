@@ -1,0 +1,18 @@
+# The 37 tests ran on a laptop and nowhere else. A zero-dependency package
+# whose whole pitch is that it pulls nothing in is exactly the one where a
+# regression ships unnoticed, because there is no install step to fail first.
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ matrix.node }}' }
+      - run: node --test test/*.test.mjs

@@ -28,6 +28,7 @@ import { startProxy } from './proxy.mjs';
 import { detect } from './tty.mjs';
 import { runTui, runLineMode, readAll } from './tui.mjs';
 import { createInterface } from 'node:readline/promises';
+import { readFileSync } from 'node:fs';
 
 const HELP = `${bold('lobstack')} - one key, every model, and what each call cost.
 
@@ -50,8 +51,35 @@ ${dim('Environment')}
   NO_COLOR, TERM=dumb, LOBSTACK_ASCII - all respected.
 `;
 
-/** Flags that take no value. Everything else consumes the next argument. */
-const BOOLEAN_FLAGS = new Set(['json', 'force']);
+/**
+ * Read from package.json rather than declared here.
+ *
+ * A version constant beside a version field is two places to bump and one
+ * place to forget; `npm version` writes the manifest and nothing else, so the
+ * manifest is the one that is always right.
+ */
+const VERSION = (() => {
+  try {
+    return JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ).version;
+  } catch {
+    return '0.0.0';
+  }
+})();
+
+
+/**
+ * Flags that take no value. Everything else consumes the next argument.
+ *
+ * `help` and `version` have to be in here, and their absence was not a
+ * cosmetic bug. Anything not listed swallows the next argv item, so
+ * `lobstack chat --version "hi"` ate the prompt and answered "nothing to
+ * send", and a bare `--help` fell through to the no-command branch — which, in
+ * a terminal with a key saved, opens the chat UI instead of printing anything.
+ * `npx lobstack --help` is the first thing a new user types.
+ */
+const BOOLEAN_FLAGS = new Set(['json', 'force', 'help', 'version']);
 
 function parseArgs(argv) {
   const out = { _: [], flags: {} };
@@ -275,6 +303,17 @@ async function cmdTui(args, flags) {
 
 const { _: positional, flags } = parseArgs(process.argv.slice(2));
 const [command, ...rest] = positional;
+
+// Answered before the switch, so they work with or without a command and
+// cannot be captured by the bare-`lobstack` branch below.
+if (flags.help) {
+  process.stdout.write(HELP);
+  process.exit(0);
+}
+if (flags.version) {
+  process.stdout.write(`${VERSION}\n`);
+  process.exit(0);
+}
 
 try {
   switch (command) {
