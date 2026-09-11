@@ -1,0 +1,56 @@
+# Publishing the `lobstack` CLI to npm.
+#
+# The token lives in one place: the repository secret NPM_TOKEN. It is never on
+# a laptop, never in a shell history, never pasted into a message. Publishing
+# is `npm version patch && git push --follow-tags`; this file does the rest.
+#
+# `id-token: write` is what lets npm attach a provenance attestation, so anyone
+# running `npx lobstack` can verify the tarball was built from this commit in
+# this repository rather than uploaded by hand. That check compares the
+# attestation against package.json's `repository` field, which is why the CLI
+# publishes from here and not from the copy inside the website monorepo --
+# that one names a different repository, and the attestation would not match.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # The tag is the claim; package.json is the fact. If they disagree the
+      # wrong version gets published under the right tag, and nobody notices
+      # until an install pulls something unexpected.
+      - name: Tag must match the version in package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME says $tag, package.json says $pkg." >&2
+            exit 1
+          fi
+
+      # No dependencies, so there is nothing to install and no lockfile to
+      # respect: `npm ci` would fail here for want of one.
+      - run: npm test
+
+      # `lobstack` is unscoped, so it is public by default -- but --access
+      # public is still written down, because the failure it prevents (a
+      # package silently published private) is invisible until someone tries
+      # to install it.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
