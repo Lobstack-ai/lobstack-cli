@@ -24,7 +24,7 @@
 
 import { createServer } from 'node:http';
 import { gatewayUrl } from './config.mjs';
-import { dim, green, money } from './render.mjs';
+import { dim, green, money, savingsLabel } from './render.mjs';
 
 const HOST = '127.0.0.1';
 
@@ -67,16 +67,27 @@ function logReceipt(started, { receipt, usage }) {
   if (usage) parts.push(`${dim('tokens')} ${usage.prompt_tokens}/${usage.completion_tokens}`);
   parts.push(`${dim('cost')} ${money(receipt?.cost_usd)}`);
   // See render.mjs: a plan-ceiling baseline is not a like-for-like saving and
-  // must not be printed as one.
-  if (typeof receipt?.savings_usd === 'number' && receipt.savings_usd > 0) {
-    const named = receipt.baseline_reason === 'named';
-    parts.push(`${dim(named ? 'saved' : 'vs ceiling')} ${green(money(receipt.savings_usd))}`);
-  }
+  // must not be printed as one. One rule, one implementation.
+  const saving = savingsLabel(receipt);
+  if (saving) parts.push(`${dim(saving.label)} ${green(money(saving.amount))}`);
   parts.push(`${dim('in')} ${ms}ms`);
   process.stderr.write(dim('- ') + parts.join(dim('  -  ')) + '\n');
 }
 
-export async function startProxy({ key, base, port }) {
+/**
+ * @param {object} o
+ * @param {string} o.key      the Lobstack credential this process holds
+ * @param {string} o.base     the gateway origin
+ * @param {number} o.port     loopback port to listen on
+ * @param {boolean} [o.quiet] return the server instead of printing a banner and
+ *                            blocking forever. The TUI runs the proxy inside
+ *                            itself and owns the screen, so it cannot have a
+ *                            second writer on stderr or a call that never
+ *                            returns.
+ * @param {(r:{receipt:object|undefined,usage:object|undefined,ms:number,path:string}) => void} [o.onReceipt]
+ *                            called per request instead of the stderr line.
+ */
+export async function startProxy({ key, base, port, quiet = false, onReceipt }) {
   const server = createServer(async (req, res) => {
     const started = Date.now();
 
@@ -129,7 +140,9 @@ export async function startProxy({ key, base, port }) {
         tail = (tail + decoder.decode(value, { stream: true })).slice(-4096);
       }
       res.end();
-      logReceipt(started, receiptFromTail(tail));
+      const parsed = receiptFromTail(tail);
+      if (onReceipt) onReceipt({ ...parsed, ms: Date.now() - started, path });
+      else logReceipt(started, parsed);
     } catch (err) {
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
       res.end(
@@ -138,7 +151,22 @@ export async function startProxy({ key, base, port }) {
     }
   });
 
-  await new Promise((resolve) => server.listen(port, HOST, resolve));
+  // `listen` reports failure as an 'error' event, and an unhandled one on a
+  // server is an uncaught exception - which inside the TUI would tear down the
+  // screen over something as ordinary as a port already being in use.
+  await new Promise((resolve, reject) => {
+    server.once('error', (err) =>
+      reject(
+        new Error(
+          err.code === 'EADDRINUSE'
+            ? `port ${port} is already in use - pass a different --port.`
+            : `could not listen on ${HOST}:${port}: ${err.message}`,
+        ),
+      ),
+    );
+    server.listen(port, HOST, resolve);
+  });
+  if (quiet) return server;
 
   process.stderr.write(
     `\n${green('Listening')} on http://${HOST}:${port}/v1  ${dim('-> ' + base)}\n\n` +

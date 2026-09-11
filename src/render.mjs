@@ -9,7 +9,34 @@ export const red = wrap('31');
 export const green = wrap('32');
 
 export const money = (n) =>
-  n === null || n === undefined ? 'unpriced' : n >= 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(6)}`;
+  typeof n !== 'number' || !Number.isFinite(n)
+    ? 'unpriced'
+    : n >= 0.01
+      ? `$${n.toFixed(4)}`
+      : `$${n.toFixed(6)}`;
+
+/**
+ * Whether a saving may be called a saving, in one place.
+ *
+ * `baseline_reason` decides. "named" means the caller asked for a model and got
+ * something cheaper -- a like-for-like comparison, and the only case that may
+ * be labelled `saved`. "plan_ceiling" means they sent `auto` and the gateway
+ * measured against the most expensive model their plan allows, which is a real
+ * comparison but not one they asked for.
+ *
+ * This lives here rather than in each renderer because there are now three of
+ * them -- the single-shot receipt, the proxy's per-request line and the TUI --
+ * and three copies of a rule about overstating savings is three chances to
+ * drift apart on the one thing this product is arguing about.
+ *
+ * @returns {{label:string, named:boolean, amount:number}|null}
+ */
+export function savingsLabel(receipt) {
+  const amount = receipt?.savings_usd;
+  if (typeof amount !== 'number' || !(amount > 0)) return null;
+  const named = receipt.baseline_reason === 'named';
+  return { label: named ? 'saved' : 'vs ceiling', named, amount };
+}
 
 /**
  * Print the receipt.
@@ -31,16 +58,10 @@ export function printReceipt({ receipt, usage, model }) {
   if (usage) parts.push(`${dim('tokens')} ${usage.prompt_tokens}/${usage.completion_tokens}`);
   parts.push(`${dim('cost')} ${money(receipt?.cost_usd)}`);
 
-  // `baseline_reason` decides whether this number may be called a saving.
-  // "named" means the caller asked for a model and got something cheaper --
-  // a like-for-like comparison. "plan_ceiling" means they sent `auto` and the
-  // gateway measured against the most expensive model their plan allows, which
-  // is a real comparison but not one they asked for. Printing the two
-  // identically is the overstatement the receipt exists to prevent.
-  if (typeof receipt?.savings_usd === 'number' && receipt.savings_usd > 0) {
-    const named = receipt.baseline_reason === 'named';
-    parts.push(`${dim(named ? 'saved' : 'vs ceiling')} ${green(money(receipt.savings_usd))}`);
-  }
+  // Printing a plan-ceiling comparison as a like-for-like saving is the
+  // overstatement the receipt exists to prevent. `savingsLabel` decides.
+  const saving = savingsLabel(receipt);
+  if (saving) parts.push(`${dim(saving.label)} ${green(money(saving.amount))}`);
 
   process.stderr.write('\n' + dim('- ') + parts.join(dim('  -  ')) + '\n');
 

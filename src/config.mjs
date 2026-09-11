@@ -8,7 +8,7 @@
  * instant. LOBSTACK_API_KEY still wins when set, because CI has no home
  * directory worth writing to.
  */
-import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
