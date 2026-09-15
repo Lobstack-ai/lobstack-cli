@@ -1,6 +1,6 @@
 {
   "name": "lobstack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The Lobstack Gateway from your terminal: one key, every model, and what each call cost.",
   "type": "module",
   "bin": {
