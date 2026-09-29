@@ -1,6 +1,7 @@
 # lobstack
 
-One key, every model, and what each call cost.
+The Lobstack API from your terminal: one key, every model, and what each call
+cost.
 
 ```bash
 npx lobstack init
@@ -60,7 +61,7 @@ worse than not having it.
 | | |
 |---|---|
 | `/model [name]` | set the model, or open the picker |
-| `/models` | what the gateway will serve, with prices. `auto` — Nex 1, the router — is first, priced `—` because it costs whatever it picks |
+| `/models` | what the API will serve, with prices. `auto` — Nex 1, the router — is first, priced `—` because it costs whatever it picks |
 | `/spend [days]` | what you have actually spent, from the usage API |
 | `/receipt` | every field of the last receipt, verbatim, plus the session tally |
 | `/proxy [port]` | serve the OpenAI-compatible endpoint from this process |
@@ -101,7 +102,7 @@ your shell reading mouse packets as keystrokes. Nothing here needs a mouse.
 |---|---|
 | `lobstack init` | Save a key to `~/.lobstack/config.json`, mode 0600. Verifies it before writing. |
 | `lobstack chat "<prompt>"` | One call, streamed. Answer to stdout, receipt to stderr, so `> out.txt` gives you the answer alone. |
-| `lobstack models` | What the gateway will serve, with prices. `auto` — Nex 1 — leads the list with no price of its own. Also public at <https://www.lobstack.ai/models>. |
+| `lobstack models` | What the API will serve, with prices. `auto` — Nex 1 — leads the list with no price of its own. Also public at <https://www.lobstack.ai/models>. |
 | `lobstack spend [--days 7]` | What you have spent. Needs a key with the `usage:read` scope. |
 | `lobstack proxy [--port 8787]` | A local OpenAI-compatible endpoint. |
 
@@ -157,12 +158,12 @@ window title. Escapes are removed, not rendered.
 
 ## Cost is read, never computed
 
-The gateway puts the price on the final SSE frame under `x_lobstack`, because on
+The Lobstack API puts the price on the final SSE frame under `x_lobstack`, because on
 a streamed response the headers are written before the provider has counted a
 token. This CLI reads that number. It does not multiply token counts by a
 bundled rate card — our own desktop client did exactly that, and printed
 `$0.00` for three months next to a correct invoice, because its copy of the
-rate card knew six models and the gateway serves forty-five.
+rate card knew six models and the API serves several times that.
 
 That is also why the UI shows no running dollar figure *during* a stream. Until
 the last frame lands there is no price to show, so it shows elapsed time and how
@@ -170,13 +171,13 @@ much text arrived, and says the price is still coming.
 
 Three rules follow, and they hold on every screen:
 
-- `cost_usd` is `null`, never `0`, when the gateway could not price a call. That
+- `cost_usd` is `null`, never `0`, when the API could not price a call. That
   prints `unpriced`. A zero renders as "free", and writing off a real charge is
   the most expensive way to be wrong about money. A session whose calls were all
   unpriced shows `unpriced` as its total, not `$0.000000`; a session with some of
   each shows the priced total and counts the rest out loud — `+1 unpriced`.
 - `saved` means the router beat a model **you named**. `vs ceiling` means you
-  sent `auto` and the gateway measured against the priciest model your plan
+  sent `auto` and the API measured against the priciest model your plan
   allows. `baseline_reason` says which, the receipt says which, and the two are
   separate running totals that are never added together.
 - No figure is ever truncated to fit.
