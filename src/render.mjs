@@ -39,6 +39,86 @@ export function savingsLabel(receipt) {
 }
 
 /**
+ * `/api/v1/usage`, as lines of text, for `lobstack spend` and the TUI's /spend.
+ *
+ * THE TOTAL IS THE CONSOLE'S. The endpoint returns two totals of one quantity:
+ * `spend.cost_usd`, from the billing ledger the Console's Spend shows and
+ * invoices are cut from, and `summary.cost_usd`, the request trace's own copy
+ * of each price, kept for older callers. They are written separately and can
+ * disagree. The ledger's figure is used, and each group's `ledger_cost_usd`;
+ * the trace's copy only when the ledger figure is null (it could not be read)
+ * or absent (an older deployment), and a note says so.
+ *
+ * SAVINGS ARE TWO FIGURES. `savings.named` is measured against models the
+ * caller asked for; `savings.plan_ceiling` is what `auto` requests would have
+ * cost on the priciest model the plan allows, which nobody asked for. They are
+ * printed on separate lines and never added together.
+ *
+ * Plain strings, no colour, so both renderers can use them.
+ *
+ * @returns {{head: string, rows: string[], savings: string[], notes: string[]}}
+ */
+export function spendReport(body, days) {
+  const s = body?.summary || {};
+  const ledger = body?.spend && typeof body.spend === 'object' ? body.spend : null;
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const fromLedger = ledger !== null && isNum(ledger.cost_usd);
+  const cost = fromLedger ? ledger.cost_usd : isNum(s.cost_usd) ? s.cost_usd : null;
+  const unpriced = fromLedger ? ledger.unpriced_rows ?? 0 : s.unpriced_requests ?? 0;
+  const priceable = fromLedger ? ledger.rows ?? 0 : s.requests ?? 0;
+  const costText = priceable > 0 && unpriced >= priceable ? 'unpriced' : money(cost);
+  const n = (count, one) => `${count} ${one}${count === 1 ? '' : 's'}`;
+
+  // The window the server actually summed. It answers an unknown range with
+  // 7d, so `--days 5` is labelled for what came back, not what was asked.
+  const served = typeof body?.range === 'string' ? body.range : `${days}d`;
+  const label = served === 'month' ? 'this month' : /^\d+d$/.test(served) ? `last ${parseInt(served, 10)} days` : `last ${days} days`;
+  const head = `${label}: ${n(s.requests ?? 0, 'request')}, ${costText}`;
+  const rows = (body?.groups ?? []).map((g) => {
+    const gCost = isNum(g.ledger_cost_usd) ? g.ledger_cost_usd : isNum(g.cost_usd) ? g.cost_usd : null;
+    const gUnpriced = isNum(g.ledger_cost_usd) ? g.ledger_unpriced_rows ?? 0 : g.unpriced_requests ?? 0;
+    return (
+      `  ${String(g.key ?? '').padEnd(24)} ${String(g.requests ?? 0).padStart(6)}  ${money(gCost)}` +
+      (gUnpriced ? `  (${gUnpriced} unpriced)` : '')
+    );
+  });
+
+  const savings = [];
+  const named = body?.savings?.named;
+  const ceiling = body?.savings?.plan_ceiling;
+  if (named && named.requests > 0 && isNum(named.difference_usd)) {
+    savings.push(
+      named.difference_usd < 0
+        ? `routing cost ${money(-named.difference_usd)} more than the models you named, on ${n(named.requests, 'request')}`
+        : `saved ${money(named.difference_usd)} on models you named, on ${n(named.requests, 'request')}`,
+    );
+  }
+  if (ceiling && ceiling.requests > 0 && isNum(ceiling.difference_usd)) {
+    savings.push(
+      `vs ceiling ${money(ceiling.difference_usd)} on ${n(ceiling.requests, 'auto request')} - ` +
+        'compared with the best model your plan allows, which you did not ask for; not a saving',
+    );
+  }
+
+  const notes = [];
+  if (!fromLedger) {
+    notes.push(
+      (ledger === null && body && 'spend' in body
+        ? 'the billing ledger could not be read'
+        : 'this deployment does not report the billing ledger') +
+        ", so this total is the request trace's copy of each price (the legacy summary.cost_usd) and can differ from the Console",
+    );
+  }
+  if (unpriced > 0) {
+    notes.push(`${n(unpriced, fromLedger ? 'row' : 'request')} could not be priced, so the total is a floor, not a total`);
+  }
+  if (body?.truncated || (fromLedger && ledger.truncated)) {
+    notes.push('the row cap bound on this range, so older requests are not counted');
+  }
+  return { head, rows, savings, notes };
+}
+
+/**
  * Print the receipt.
  *
  * `cost_usd` is null, never zero, when the Gateway could not price the call.
@@ -71,7 +151,7 @@ export function printReceipt({ receipt, usage, model }) {
     );
   }
   if (receipt && receipt.priced === false) {
-    process.stderr.write(dim('  the gateway could not price this model, so no cost is claimed\n'));
+    process.stderr.write(dim('  the Lobstack API could not price this model, so no cost is claimed\n'));
   }
   if (!receipt) {
     // An older Gateway, or a non-Lobstack base URL. Say so rather than

@@ -22,7 +22,7 @@
  */
 
 import { readConfig, writeConfig, resolveKey, resolveBase, gatewayUrl, CONFIG_PATH } from './config.mjs';
-import { printReceipt, dim, bold, green, money, fail } from './render.mjs';
+import { printReceipt, dim, bold, green, money, fail, spendReport } from './render.mjs';
 import { gwFetch, errorText, fetchModels, fetchUsage, streamCompletion } from './gateway.mjs';
 import { startProxy } from './proxy.mjs';
 import { detect } from './tty.mjs';
@@ -35,14 +35,14 @@ const HELP = `${bold('lobstack')} - one key, every model, and what each call cos
   ${bold('lobstack')}                       the interactive UI: watch the cost as it happens
   ${bold('lobstack init')}                  save an API key to ${CONFIG_PATH}
   ${bold('lobstack chat')} "<prompt>"       one call, streamed, with the receipt
-  ${bold('lobstack models')}                what the gateway will serve, and at what price
+  ${bold('lobstack models')}                what the Lobstack API will serve, and at what price
   ${bold('lobstack spend')} [--days 7]      what you have spent, from the usage API
   ${bold('lobstack proxy')} [--port 8787]   a local OpenAI-compatible endpoint
 
 ${dim('Options')}
   --model <key>     default: auto (let the router choose)
   --key <lsk_...>   override the saved key for one command
-  --base <url>      override the gateway host
+  --base <url>      override the Lobstack API host
   --json            machine-readable output where it makes sense
   --force           draw the UI even where the streams do not look like a terminal
 
@@ -141,7 +141,7 @@ async function cmdInit(flags) {
   const b = base(flags);
   process.stdout.write(dim('checking the key...\n'));
   const res = await gwFetch(gatewayUrl(b, '/models'), key);
-  if (!res.ok) fail(`the gateway rejected that key: ${await errorText(res)}`);
+  if (!res.ok) fail(`the Lobstack API rejected that key: ${await errorText(res)}`);
 
   writeConfig({ ...readConfig(), key, baseUrl: b });
   process.stdout.write(
@@ -213,18 +213,13 @@ async function cmdSpend(flags) {
     fail(body.message || 'usage reporting is not enabled on this deployment.');
   }
 
-  const s = body.summary || {};
+  const r = spendReport(body, days);
   process.stdout.write(
-    `${bold(`Last ${days} days`)}  ${dim('-')}  ` +
-      `${s.requests ?? 0} requests  ${dim('-')}  ${money(Number(s.cost_usd ?? 0))}` +
-      (Number(s.savings_usd ?? 0) > 0 ? `  ${dim('-')}  saved ${green(money(Number(s.savings_usd)))}` : '') +
-      '\n\n',
+    `${bold(r.head.charAt(0).toUpperCase() + r.head.slice(1))}\n\n` +
+      r.rows.map((row) => `${row}\n`).join('') +
+      (r.savings.length ? `\n${r.savings.map((l) => `  ${l.startsWith('saved') ? green(l) : l}\n`).join('')}` : '') +
+      (r.notes.length ? `\n${r.notes.map((l) => dim(`  ${l}\n`)).join('')}` : ''),
   );
-  for (const g of body.groups ?? []) {
-    process.stdout.write(
-      `  ${String(g.key ?? '').padEnd(24)} ${String(g.requests ?? 0).padStart(6)}  ${money(Number(g.cost_usd ?? 0))}\n`,
-    );
-  }
 }
 
 /* ── tui ───────────────────────────────────────────────────────────────── */
@@ -359,7 +354,7 @@ try {
   }
 } catch (err) {
   // `hint` is how gateway.mjs carries the second line of an error message out
-  // of a throw. Without it a redirect would report "the gateway redirected"
+  // of a throw. Without it a redirect would report "the Lobstack API redirected"
   // and lose the sentence explaining that a redirect strips your key.
   fail(err instanceof Error ? err.message : String(err), err?.hint);
 }

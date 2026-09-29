@@ -273,8 +273,8 @@ function caveatRow(r, saving, w) {
   }
   if (r && r.priced === false) {
     return pick([
-      '   the gateway could not price this model, so no cost is claimed',
-      '   gateway could not price this model',
+      '   the Lobstack API could not price this model, so no cost is claimed',
+      '   the API could not price this model',
     ]);
   }
   if (!r) {
@@ -362,7 +362,7 @@ const KEYS = [
 
 const COMMANDS = [
   ['/model [name]', 'set the model, or open the picker'],
-  ['/models', 'what the gateway will serve, with prices'],
+  ['/models', 'what the Lobstack API will serve, with prices'],
   ['/spend [days]', 'what you have actually spent, from the usage API'],
   ['/receipt', 'every field of the last receipt, verbatim'],
   ['/proxy [port]', 'serve the OpenAI-compatible endpoint here, and watch it bill'],

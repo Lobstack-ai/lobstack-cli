@@ -19,7 +19,7 @@
 
 import { createInterface } from 'node:readline/promises';
 import { streamCompletion, fetchModels, fetchUsage, GatewayError } from './gateway.mjs';
-import { printReceipt, money, savingsLabel } from './render.mjs';
+import { printReceipt, money, savingsLabel, spendReport } from './render.mjs';
 import { startProxy } from './proxy.mjs';
 import { Terminal, detect, styler, MIN_WIDTH } from './tty.mjs';
 import { frame, newSession, accrue } from './tui-view.mjs';
@@ -55,7 +55,7 @@ class Tui {
         {
           role: 'system',
           text:
-            'Every answer here comes back with a receipt: what the gateway served, what it ' +
+            'Every answer here comes back with a receipt: what the Lobstack API served, what it ' +
             'cost, and what the routing decision saved. Type a prompt, or /help.',
         },
       ],
@@ -494,21 +494,17 @@ class Tui {
       this.say('error', body.message || 'usage reporting is not enabled on this deployment.');
       return;
     }
-    const sum = body.summary || {};
-    // Same rule as everywhere else: a saving the gateway measured against a
-    // plan ceiling is not the same claim as one against a model you named. The
-    // usage API reports a single figure, so it is labelled for what it is
-    // rather than being called a saving outright.
-    const head =
-      `last ${days} days: ${sum.requests ?? 0} requests, ${money(Number(sum.cost_usd ?? 0))}` +
-      (Number(sum.savings_usd ?? 0) > 0
-        ? `, routing saved ${money(Number(sum.savings_usd))} against the baselines the gateway recorded`
-        : '');
-    const rows = (body.groups ?? []).map(
-      (g) =>
-        `  ${String(g.key ?? '').padEnd(24)} ${String(g.requests ?? 0).padStart(6)}  ${money(Number(g.cost_usd ?? 0))}`,
+    // The Console's figure, and the two savings figures kept apart. See spendReport.
+    const r = spendReport(body, days);
+    this.say(
+      'system',
+      [
+        r.head,
+        ...r.rows,
+        ...(r.savings.length ? ['', ...r.savings.map((l) => `  ${l}`)] : []),
+        ...(r.notes.length ? ['', ...r.notes.map((l) => `  ${l}`)] : []),
+      ].join('\n'),
     );
-    this.say('system', [head, ...rows].join('\n'));
   }
 
   showReceipt() {

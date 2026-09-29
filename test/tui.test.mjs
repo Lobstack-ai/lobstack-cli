@@ -185,7 +185,8 @@ test('an unpriced call never renders as $0.00, anywhere on the screen', async ()
   // Rendering that null as a zero writes off a real charge -- the exact bug
   // that ran for three months in the desktop client.
   assert.match(text, /cost unpriced/);
-  assert.match(text, /could not price/);
+  assert.match(text, /API could not price/);
+  assert.doesNotMatch(text, /gateway/i);
   assert.doesNotMatch(text, /\$0\.00/);
   assert.doesNotMatch(text, /\$0\b/);
 

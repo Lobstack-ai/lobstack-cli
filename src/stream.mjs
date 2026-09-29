@@ -54,7 +54,7 @@ export async function consume(body, onText) {
       continue; // a half-frame is not worth ending a turn over
     }
     if (frame.error) {
-      throw new Error(frame.error.message || 'the gateway reported an error mid-stream');
+      throw new Error(frame.error.message || 'the Lobstack API reported an error mid-stream');
     }
     if (frame.model) model = frame.model;
     if (frame.usage) usage = frame.usage;

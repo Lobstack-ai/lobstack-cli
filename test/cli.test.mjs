@@ -15,6 +15,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { startFakeGateway } from './fake-gateway.mjs';
+import { spendReport } from '../src/render.mjs';
 
 const run = promisify(execFile);
 const CLI = fileURLToPath(new URL('../src/index.mjs', import.meta.url));
@@ -90,7 +91,7 @@ test('prints "unpriced" rather than $0.00 when the gateway could not price it', 
     // ran for three months in the desktop client.
     assert.match(stderr, /unpriced/);
     assert.doesNotMatch(stderr, /\$0\.000000/);
-    assert.match(stderr, /could not price/);
+    assert.match(stderr, /the Lobstack API could not price/);
   } finally {
     gw.close();
   }
@@ -123,7 +124,7 @@ test('refuses to follow a redirect instead of losing the key to it', async () =>
     await assert.rejects(
       () => invoke(['models', '--base', url]),
       (err) => {
-        assert.match(err.stderr, /redirected/);
+        assert.match(err.stderr, /the Lobstack API redirected/);
         assert.match(err.stderr, /strips your key/);
         return true;
       },
@@ -168,15 +169,55 @@ test('lists models with their prices', async () => {
   }
 });
 
-test('reports spend, and names the saving', async () => {
+test('reports the ledger figure the Console shows, and the two savings apart', async () => {
   const gw = await startFakeGateway();
   try {
     const { stdout } = await invoke(['spend', '--base', gw.url]);
-    assert.match(stdout, /3 requests/);
-    assert.match(stdout, /saved/);
+    assert.match(stdout, /^Last 7 days: 3 requests, \$0\.004100$/m, 'spend.cost_usd, the Console figure');
+    assert.doesNotMatch(stdout, /\$0\.003300/, 'summary.cost_usd is the legacy copy');
+    assert.match(stdout, /saved \$0\.0132 on models you named, on 2 requests/);
+    assert.match(stdout, /vs ceiling \$0\.5000 on 1 auto request - .*not a saving/);
+    assert.doesNotMatch(stdout, /\$0\.5132/, 'the two savings are never added together');
+    assert.doesNotMatch(stdout, /legacy/);
   } finally {
     gw.close();
   }
+});
+
+test('falls back to the legacy figure only when the ledger could not be read, and says so', async () => {
+  const gw = await startFakeGateway({ ledgerUnreadable: true });
+  try {
+    const { stdout } = await invoke(['spend', '--base', gw.url]);
+    assert.match(stdout, /\$0\.003300/);
+    assert.match(stdout, /billing ledger could not be read/);
+    assert.match(stdout, /legacy summary\.cost_usd/);
+    assert.doesNotMatch(stdout, /saved|vs ceiling/);
+  } finally {
+    gw.close();
+  }
+});
+
+test('spendReport: an older deployment with no ledger block falls back, and says so', () => {
+  const r = spendReport({ summary: { requests: 2, cost_usd: 0.02, unpriced_requests: 1 }, groups: [] }, 7);
+  assert.match(r.head, /\$0\.0200/);
+  assert.match(r.notes.join('\n'), /does not report the billing ledger/);
+  assert.match(r.notes.join('\n'), /1 request could not be priced/);
+});
+
+test('spendReport: the floor is counted on the ledger\'s own rows, and all-unpriced is not $0', () => {
+  const r = spendReport(
+    { summary: { requests: 4, cost_usd: 0, unpriced_requests: 0 }, spend: { cost_usd: 0, rows: 2, unpriced_rows: 2 }, groups: [] },
+    30,
+  );
+  assert.match(r.head, /last 30 days: 4 requests, unpriced$/);
+  assert.match(r.notes.join('\n'), /2 rows could not be priced/);
+});
+
+test('help names the Lobstack API, not the gateway', async () => {
+  const { stdout } = await invoke(['--help']);
+  assert.match(stdout, /what the Lobstack API will serve/);
+  assert.match(stdout, /override the Lobstack API host/);
+  assert.doesNotMatch(stdout, /the gateway/i);
 });
 
 test('says what to do when there is no key at all', async () => {

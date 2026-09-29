@@ -103,7 +103,7 @@ your shell reading mouse packets as keystrokes. Nothing here needs a mouse.
 | `lobstack init` | Save a key to `~/.lobstack/config.json`, mode 0600. Verifies it before writing. |
 | `lobstack chat "<prompt>"` | One call, streamed. Answer to stdout, receipt to stderr, so `> out.txt` gives you the answer alone. |
 | `lobstack models` | What the API will serve, with prices. `auto` — Nex 1 — leads the list with no price of its own. Also public at <https://www.lobstack.ai/models>. |
-| `lobstack spend [--days 7]` | What you have spent. Needs a key with the `usage:read` scope. |
+| `lobstack spend [--days 7]` | What you have spent: the billing ledger's total, the same figure the Console shows, with routing savings as two separate figures. Needs a key with the `usage:read` scope. |
 | `lobstack proxy [--port 8787]` | A local OpenAI-compatible endpoint. |
 
 Flags: `--model` (default `auto`, which is **Nex 1**, the router), `--key`, `--base`, `--json`, `--force`.

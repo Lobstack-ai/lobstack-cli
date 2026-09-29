@@ -64,6 +64,8 @@ const LONG_DELTAS = [
  * @param {boolean} [o.ceilingBaseline] baseline_reason plan_ceiling
  * @param {boolean} [o.noReceipt]       no x_lobstack at all, like an older gateway
  * @param {boolean} [o.long]            the multi-paragraph answer
+ * @param {boolean} [o.ledgerUnreadable] /api/v1/usage answers spend: null and
+ *                                      savings: null, as when the ledger read fails
  * @param {number}  [o.slow]            ms between the two halves of the stream
  * @param {number}  [o.port]            fixed port; 0 (default) picks one
  */
@@ -72,6 +74,7 @@ export function startFakeGateway({
   ceilingBaseline = false,
   noReceipt = false,
   long = false,
+  ledgerUnreadable = false,
   slow = 10,
   port = 0,
 } = {}) {
@@ -104,9 +107,31 @@ export function startFakeGateway({
     if (req.url?.includes('/api/v1/usage')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
+        // The shape /api/v1/usage really sends. The trace's copy of the price
+        // (summary.cost_usd) and the ledger's (spend.cost_usd, what the Console
+        // shows) disagree on purpose, so printing the wrong one fails a test.
         JSON.stringify({
-          summary: { requests: 3, cost_usd: 0.0033, savings_usd: 0.0132 },
-          groups: [{ key: 'claude-haiku-4-5', requests: 3, cost_usd: 0.0033 }],
+          enabled: true,
+          range: '7d',
+          group_by: 'model',
+          summary: { requests: 3, errors: 0, cost_usd: 0.0033, unpriced_requests: 0 },
+          spend: ledgerUnreadable
+            ? null
+            : { source: 'ledger', cost_usd: 0.0041, managed_cost_usd: 0.0041, byok_cost_usd: 0, rows: 3, unpriced_rows: 0, truncated: false },
+          savings: ledgerUnreadable
+            ? null
+            : {
+                named: { requests: 2, served_cost_usd: 0.0021, baseline_cost_usd: 0.0153, difference_usd: 0.0132, baseline_models: ['claude-opus-5'] },
+                plan_ceiling: { requests: 1, served_cost_usd: 0.002, baseline_cost_usd: 0.502, difference_usd: 0.5, baseline_models: ['claude-opus-5'] },
+                unpriced_routed_requests: 0,
+              },
+          groups: [
+            {
+              key: 'claude-haiku-4-5', requests: 3, cost_usd: 0.0033, unpriced_requests: 0,
+              ...(ledgerUnreadable ? {} : { ledger_cost_usd: 0.0041, ledger_rows: 3, ledger_unpriced_rows: 0 }),
+            },
+          ],
+          truncated: false,
         }),
       );
       return;

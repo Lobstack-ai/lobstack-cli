@@ -41,7 +41,7 @@ export async function gwFetch(url, key, init = {}) {
     // good key with "missing credentials" - the failure that made this look
     // broken for three months.
     throw new GatewayError(
-      `the gateway redirected to ${res.headers.get('location') || 'somewhere else'}.`,
+      `the Lobstack API redirected to ${res.headers.get('location') || 'somewhere else'}.`,
       'A redirect strips your key. Point --base at the host that answers directly.',
     );
   }
