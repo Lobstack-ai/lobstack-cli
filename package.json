@@ -1,7 +1,7 @@
 {
   "name": "lobstack",
-  "version": "0.1.1",
-  "description": "The Lobstack Gateway from your terminal: one key, every model, and what each call cost.",
+  "version": "0.1.2",
+  "description": "The Lobstack API from your terminal: one key, every model, and what each call cost.",
   "type": "module",
   "bin": {
     "lobstack": "./src/index.mjs"
@@ -20,7 +20,8 @@
     "anthropic",
     "proxy",
     "cli",
-    "lobstack"
+    "lobstack",
+    "lobstack-api"
   ],
   "license": "MIT",
   "repository": {
