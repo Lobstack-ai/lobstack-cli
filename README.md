@@ -1,7 +1,7 @@
 # lobstack
 
-The Lobstack API from your terminal: one key, every model, and what each call
-cost.
+The Lobstack API from your terminal: one key for five model providers, and what
+each call cost.
 
 ```bash
 npx lobstack init
