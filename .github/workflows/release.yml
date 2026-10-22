@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.4'
           registry-url: 'https://registry.npmjs.org'
 
       # The tag is the claim; package.json is the fact. If they disagree the
