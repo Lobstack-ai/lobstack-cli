@@ -1,7 +1,7 @@
 # lobstack
 
-The Lobstack API from your terminal: one key for five model providers, and what
-each call cost.
+The Lobstack API from your terminal: one key for four US model companies
+(Anthropic, OpenAI, Google and xAI), and what each call cost.
 
 ```bash
 npx lobstack init
@@ -18,9 +18,9 @@ npx lobstack             # the UI
      and many child pointers, which is what keeps the height down to three or
      four levels for tables with billions of rows.
 ───────────────────────────────────────────────────────────────────────────────
- model claude-haiku-4-5  asked claude-opus-5
+ model claude-haiku-5-5  asked claude-opus-5-5
  tokens 400/140  cost $0.001100  saved $0.004400  in 123ms
-   against claude-opus-5, the model you named
+   against claude-opus-5-5, the model you named
 ›
  ^C quit   Tab model   PgUp scroll   ^L redraw   /help for the rest
 ```
@@ -184,6 +184,7 @@ Three rules follow, and they hold on every screen:
 
 ## Get a key
 
-<https://www.lobstack.ai/start> — free, no card, about a minute.
+<https://www.lobstack.ai/start>. The Free plan starts with $5 of model usage and
+needs no card; plans are at <https://www.lobstack.ai/pricing>.
 
 MIT.
