@@ -1,7 +1,7 @@
 {
   "name": "lobstack",
-  "version": "0.1.3",
-  "description": "The Lobstack API from your terminal: one key, every model, and what each call cost.",
+  "version": "0.2.0",
+  "description": "The Lobstack API from your terminal: one key for Anthropic, OpenAI, Google and xAI models, embeddings and web search, and what each call cost.",
   "type": "module",
   "bin": {
     "lobstack": "./src/index.mjs"
@@ -18,6 +18,10 @@
     "gateway",
     "openai",
     "anthropic",
+    "google",
+    "xai",
+    "embeddings",
+    "web-search",
     "proxy",
     "cli",
     "lobstack",

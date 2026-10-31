@@ -267,3 +267,235 @@ test('the proxy forwards a stream and reports what it cost', async () => {
     gw.close();
   }
 });
+
+/* ── 0.2.0: embeddings, search, spend windows, error classes ───────────── */
+
+test('embed sends the model and dimensions, and prints the size and the header cost', async () => {
+  const gw = await startFakeGateway();
+  try {
+    const { stdout, stderr } = await invoke([
+      'embed', 'why did the deploy roll back', '--model', 'text-embedding-3-large', '--dimensions', '256', '--tag', 'acme', '--base', gw.url,
+    ]);
+    const req = gw.seen.find((r) => r.url.endsWith('/embeddings'));
+    assert.equal(req.method, 'POST');
+    assert.equal(req.body.input, 'why did the deploy roll back');
+    assert.equal(req.body.model, 'text-embedding-3-large');
+    assert.equal(req.body.dimensions, 256);
+    assert.equal(req.headers['x-lobstack-client-tag'], 'acme');
+    assert.match(stdout, /^256 dimensions/);
+    // Eight decimal places on the wire; a tiny cost must not print as zero.
+    assert.match(stderr, /\$0\.000000/);
+    assert.doesNotMatch(stderr, /unpriced/);
+    assert.match(stderr, /tokens 6/);
+  } finally {
+    gw.close();
+  }
+});
+
+test('embed --json carries the full vector and the receipt', async () => {
+  const gw = await startFakeGateway();
+  try {
+    const { stdout } = await invoke(['embed', 'hello', '--json', '--base', gw.url]);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.data[0].embedding.length, 1536);
+    assert.equal(parsed.x_lobstack.cost_usd, 1.2e-7);
+    assert.equal(parsed.x_lobstack.priced, true);
+  } finally {
+    gw.close();
+  }
+});
+
+test('search prints results with escapes stripped, and the per-search cost', async () => {
+  const gw = await startFakeGateway();
+  try {
+    const { stdout, stderr } = await invoke(['search', 'deploy rollback', '--count', '2', '--base', gw.url]);
+    const req = gw.seen.find((r) => r.url.endsWith('/search'));
+    assert.deepEqual(req.body, { query: 'deploy rollback', count: 2 });
+    assert.match(stdout, /1\. Rollbacks/);
+    assert.match(stdout, /https:\/\/example\.com\/rollbacks/);
+    assert.equal(stdout.includes('\u001b'), false, 'a title must not carry an escape to the terminal');
+    assert.match(stderr, /web-search/);
+    assert.match(stderr, /\$0\.005000/);
+    assert.match(stderr, /cache miss/);
+  } finally {
+    gw.close();
+  }
+});
+
+test('a cached search says so and costs nothing', async () => {
+  const gw = await startFakeGateway({ searchCached: true });
+  try {
+    const { stderr } = await invoke(['search', 'deploy rollback', '--base', gw.url]);
+    assert.match(stderr, /cache hit/);
+    assert.match(stderr, /cost \$0\.000000/);
+  } finally {
+    gw.close();
+  }
+});
+
+test('search refuses a count the API would refuse', async () => {
+  await assert.rejects(
+    () => invoke(['search', 'x', '--count', '11', '--base', 'http://127.0.0.1:9']),
+    (err) => {
+      assert.match(err.stderr, /--count must be an integer from 1 to 10/);
+      return true;
+    },
+  );
+});
+
+test('spend passes --range and --group-by through, and labels the grouping', async () => {
+  const gw = await startFakeGateway();
+  try {
+    const { stdout } = await invoke(['spend', '--range', 'month', '--group-by', 'agent', '--client', 'acme', '--base', gw.url]);
+    const req = gw.seen.find((r) => r.url.includes('/api/v1/usage'));
+    const q = new URL(req.url, 'http://x').searchParams;
+    assert.equal(q.get('range'), 'month');
+    assert.equal(q.get('group_by'), 'agent');
+    assert.equal(q.get('client'), 'acme');
+    assert.match(stdout, /^This month: 3 requests, \$0\.004100$/m);
+    assert.match(stdout, /AGENT/);
+  } finally {
+    gw.close();
+  }
+});
+
+test('spend refuses a window the usage API would silently answer as 7d', async () => {
+  await assert.rejects(
+    () => invoke(['spend', '--days', '5', '--base', 'http://127.0.0.1:9']),
+    (err) => {
+      assert.match(err.stderr, /"5d" is not a window/);
+      assert.match(err.stderr, /month \| 1d \| 7d/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => invoke(['spend', '--group-by', 'colour', '--base', 'http://127.0.0.1:9']),
+    (err) => {
+      assert.match(err.stderr, /"colour" is not a grouping/);
+      return true;
+    },
+  );
+});
+
+test('a 402 names its class and code and says what to do', async () => {
+  const gw = await startFakeGateway({
+    fail: {
+      status: 402,
+      body: { error: { message: 'monthly allowance exhausted', type: 'quota', code: 402, error_code: 'ALLOWANCE_EXHAUSTED', request_id: 'req_err' } },
+    },
+  });
+  try {
+    await assert.rejects(
+      () => invoke(['chat', 'hi', '--base', gw.url]),
+      (err) => {
+        assert.match(err.stderr, /monthly allowance exhausted \[402 quota ALLOWANCE_EXHAUSTED\] \(request req_err\)/);
+        assert.match(err.stderr, /Top up or upgrade in Console > Billing/);
+        return true;
+      },
+    );
+  } finally {
+    gw.close();
+  }
+});
+
+test('a 429 puts the Retry-After in the hint', async () => {
+  const gw = await startFakeGateway({
+    fail: {
+      status: 429,
+      headers: { 'retry-after': '23' },
+      body: { error: { message: 'rate limit', type: 'quota', code: 429, error_code: 'RATE_LIMITED' } },
+    },
+  });
+  try {
+    await assert.rejects(
+      () => invoke(['search', 'x', '--base', gw.url]),
+      (err) => {
+        assert.match(err.stderr, /\[429 quota RATE_LIMITED\]/);
+        assert.match(err.stderr, /Wait for 23s, then retry/);
+        return true;
+      },
+    );
+  } finally {
+    gw.close();
+  }
+});
+
+test('a 403 on spend names the usage:read scope', async () => {
+  const gw = await startFakeGateway({ fail: { status: 403, body: { error: 'this API key lacks the "usage:read" scope' } } });
+  try {
+    await assert.rejects(
+      () => invoke(['spend', '--base', gw.url]),
+      (err) => {
+        assert.match(err.stderr, /\[403 auth\]/);
+        assert.match(err.stderr, /needs the "usage:read" scope/);
+        return true;
+      },
+    );
+  } finally {
+    gw.close();
+  }
+});
+
+test('the 503 SEARCH_UNAVAILABLE shape (a plain-string error) still maps to a hint', async () => {
+  const gw = await startFakeGateway({
+    fail: { status: 503, body: { error: 'search not configured', error_code: 'SEARCH_UNAVAILABLE', request_id: 'req_err' } },
+  });
+  try {
+    await assert.rejects(
+      () => invoke(['search', 'x', '--base', gw.url]),
+      (err) => {
+        assert.match(err.stderr, /search not configured \[503 provider SEARCH_UNAVAILABLE\]/);
+        assert.match(err.stderr, /Use another search/);
+        return true;
+      },
+    );
+  } finally {
+    gw.close();
+  }
+});
+
+test('--tag sends the client tag on chat', async () => {
+  const gw = await startFakeGateway();
+  try {
+    await invoke(['chat', 'hi', '--tag', 'acme', '--base', gw.url]);
+    const req = gw.seen.find((r) => r.url.endsWith('/chat/completions'));
+    assert.equal(req.headers['x-lobstack-client-tag'], 'acme');
+  } finally {
+    gw.close();
+  }
+});
+
+test('models labels embedding rows and prices the router as -, not $0', async () => {
+  const gw = await startFakeGateway();
+  try {
+    const { stdout } = await invoke(['models', '--base', gw.url]);
+    assert.match(stdout, /text-embedding-3-small\s+embedding/);
+    // The router has no price of its own: it costs whatever it picks.
+    assert.match(stdout, /^auto\s+router\s+-\s+-$/m);
+    // An unpriced model is a dash, not a zero.
+    assert.match(stdout, /^gpt-6-luna-unpriced\s+nano\s+-\s+-$/m);
+  } finally {
+    gw.close();
+  }
+});
+
+test('help lists every command and the spend options the API accepts', async () => {
+  const { stdout } = await invoke(['--help']);
+  for (const c of ['init', 'chat', 'embed', 'search', 'models', 'spend', 'proxy']) {
+    assert.match(stdout, new RegExp(`lobstack ${c}`));
+  }
+  assert.match(stdout, /month \| 1d \| 7d \| 14d \| 30d \| 90d \| 365d/);
+  assert.match(stdout, /day \| model \| key \| agent \| provider \| mode \| client \| app/);
+});
+
+test('names only the four US model providers, nowhere DeepSeek', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const files = ['README.md', 'package.json', ...readdirSync(`${root}/src`).map((f) => `src/${f}`)];
+  for (const f of files) {
+    const text = readFileSync(`${root}/${f}`, 'utf8');
+    assert.doesNotMatch(text, /deepseek|mistral|qwen|five (model )?providers/i, `${f} names a provider Lobstack does not serve`);
+  }
+  const { stdout } = await invoke(['--help']);
+  assert.match(stdout, /Anthropic, OpenAI, Google and xAI/);
+});

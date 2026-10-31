@@ -7,8 +7,10 @@
  *   npx lobstack tui                the same thing, asked for by name
  *   npx lobstack init
  *   npx lobstack chat "say hello"
+ *   npx lobstack embed "some text"
+ *   npx lobstack search "a query"
  *   npx lobstack models
- *   npx lobstack spend
+ *   npx lobstack spend --range month --group-by day
  *   npx lobstack proxy
  *
  * Zero dependencies, on purpose. `fetch`, `node:http` and `node:readline` are
@@ -23,27 +25,53 @@
 
 import { readConfig, writeConfig, resolveKey, resolveBase, gatewayUrl, CONFIG_PATH } from './config.mjs';
 import { printReceipt, dim, bold, green, money, fail, spendReport } from './render.mjs';
-import { gwFetch, errorText, fetchModels, fetchUsage, streamCompletion } from './gateway.mjs';
+import {
+  gwFetch,
+  apiError,
+  fetchModels,
+  fetchUsage,
+  streamCompletion,
+  embed,
+  search,
+  USAGE_RANGES,
+  USAGE_GROUPS,
+} from './gateway.mjs';
 import { startProxy } from './proxy.mjs';
-import { detect } from './tty.mjs';
+import { detect, sanitize } from './tty.mjs';
 import { runTui, runLineMode, readAll } from './tui.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readFileSync } from 'node:fs';
 
-const HELP = `${bold('lobstack')} - one key, every model, and what each call cost.
+const HELP = `${bold('lobstack')} - one key for Anthropic, OpenAI, Google and xAI models, and what each call cost.
 
-  ${bold('lobstack')}                       the interactive UI: watch the cost as it happens
-  ${bold('lobstack init')}                  save an API key to ${CONFIG_PATH}
-  ${bold('lobstack chat')} "<prompt>"       one call, streamed, with the receipt
-  ${bold('lobstack models')}                what the Lobstack API will serve, and at what price
-  ${bold('lobstack spend')} [--days 7]      what you have spent, from the usage API
-  ${bold('lobstack proxy')} [--port 8787]   a local OpenAI-compatible endpoint
+  ${bold('lobstack')}                        the interactive UI: watch the cost as it happens
+  ${bold('lobstack init')}                   save an API key to ${CONFIG_PATH}
+  ${bold('lobstack chat')} "<prompt>"        one call, streamed, with the receipt
+  ${bold('lobstack embed')} "<text>"         embed text; prints the vector size and the cost
+  ${bold('lobstack search')} "<query>"       web search through the Lobstack API, priced per search
+  ${bold('lobstack models')}                 what the Lobstack API will serve, and at what price
+  ${bold('lobstack spend')}                  what you have spent, from the usage API (needs usage:read)
+  ${bold('lobstack proxy')} [--port 8787]    a local OpenAI-compatible endpoint, loopback only
+
+${dim('spend')}
+  --range <r>       ${USAGE_RANGES.join(' | ')}  (default 7d; month is the UTC month to date)
+  --days <n>        shorthand for --range <n>d
+  --group-by <g>    ${USAGE_GROUPS.join(' | ')}  (default model)
+  --client <tag>    only calls made for this client tag
+
+${dim('embed')}
+  --model <id>      text-embedding-3-small (default) or text-embedding-3-large
+  --dimensions <n>  shorten the vector
+
+${dim('search')}
+  --count <n>       results, 1-10 (default 5)
 
 ${dim('Options')}
-  --model <key>     default: auto (let the router choose)
+  --model <id>      chat model; default auto (Nex 1, the router, picks one)
+  --tag <client>    client tag for chat, embed and search, for cost attribution
   --key <lsk_...>   override the saved key for one command
   --base <url>      override the Lobstack API host
-  --json            machine-readable output where it makes sense
+  --json            machine-readable output
   --force           draw the UI even where the streams do not look like a terminal
 
 ${dim('Environment')}
@@ -141,7 +169,10 @@ async function cmdInit(flags) {
   const b = base(flags);
   process.stdout.write(dim('checking the key...\n'));
   const res = await gwFetch(gatewayUrl(b, '/models'), key);
-  if (!res.ok) fail(`the Lobstack API rejected that key: ${await errorText(res)}`);
+  if (!res.ok) {
+    const err = await apiError(res);
+    fail(`the Lobstack API rejected that key: ${err.message}`, err.hint);
+  }
 
   writeConfig({ ...readConfig(), key, baseUrl: b });
   process.stdout.write(
@@ -162,6 +193,7 @@ async function cmdChat(args, flags) {
 
   const { usage, receipt, model: served } = await streamCompletion(b, key, {
     model,
+    clientTag: flags.tag,
     messages: [{ role: 'user', content: prompt }],
     onText: (t) => process.stdout.write(t),
   });
@@ -191,19 +223,41 @@ async function cmdModels(flags) {
     const p = m.price_per_mtok || {};
     const price = (v) => (typeof v === 'number' ? `$${v}` : dim('-'));
     process.stdout.write(
-      `${(m.id || '').padEnd(w)}  ${String(m.tier || '').padEnd(9)}  ${price(p.input).padEnd(6)}  ${price(p.output)}\n`,
+      `${(m.id || '').padEnd(w)}  ${String(m.type === 'embedding' ? 'embedding' : m.tier || '').padEnd(9)}  ${price(p.input).padEnd(6)}  ${price(p.output)}\n`,
     );
   }
   process.stdout.write(
-    `\n${dim(`${rows.length} models. Send "auto" and the router picks one, then tells you which.`)}\n`,
+    `\n${dim(`${rows.length} models. Send "auto" and Nex 1, the router, picks one and tells you which.`)}\n` +
+      `${dim('Embedding models are for `lobstack embed`, not chat. Prices are USD per million tokens.')}\n`,
   );
 }
 
 /* ── spend ─────────────────────────────────────────────────────────────── */
 
+/**
+ * The window and grouping, checked against what `/api/v1/usage` accepts.
+ *
+ * The server answers an unknown `range` with 7d rather than an error, so
+ * `--days 5` would quietly report a week. Refusing it here, with the list,
+ * is kinder than a total for a window nobody asked for.
+ */
+function spendOptions(flags) {
+  let range = flags.range;
+  if (!range && flags.days !== undefined) range = `${Number(flags.days)}d`;
+  range = range || '7d';
+  if (!USAGE_RANGES.includes(range)) {
+    fail(`"${range}" is not a window the usage API serves.`, `Use --range ${USAGE_RANGES.join(' | ')}.`);
+  }
+  const groupBy = flags['group-by'] || 'model';
+  if (!USAGE_GROUPS.includes(groupBy)) {
+    fail(`"${groupBy}" is not a grouping the usage API serves.`, `Use --group-by ${USAGE_GROUPS.join(' | ')}.`);
+  }
+  return { range, groupBy, client: flags.client };
+}
+
 async function cmdSpend(flags) {
-  const days = Number(flags.days || 7);
-  const body = await fetchUsage(base(flags), requireKey(flags), days);
+  const opts = spendOptions(flags);
+  const body = await fetchUsage(base(flags), requireKey(flags), opts);
 
   if (flags.json) {
     process.stdout.write(JSON.stringify(body, null, 2) + '\n');
@@ -213,13 +267,83 @@ async function cmdSpend(flags) {
     fail(body.message || 'usage reporting is not enabled on this deployment.');
   }
 
+  const days = opts.range === 'month' ? 31 : parseInt(opts.range, 10);
   const r = spendReport(body, days);
   process.stdout.write(
     `${bold(r.head.charAt(0).toUpperCase() + r.head.slice(1))}\n\n` +
+      (r.rows.length ? `  ${dim(String(body.group_by || opts.groupBy).toUpperCase())}\n` : '') +
       r.rows.map((row) => `${row}\n`).join('') +
       (r.savings.length ? `\n${r.savings.map((l) => `  ${l.startsWith('saved') ? green(l) : l}\n`).join('')}` : '') +
       (r.notes.length ? `\n${r.notes.map((l) => dim(`  ${l}\n`)).join('')}` : ''),
   );
+}
+
+/* ── embed ─────────────────────────────────────────────────────────────── */
+
+/** One line of receipt for the two non-streamed endpoints, on stderr. */
+function headerReceipt(receipt, extra = []) {
+  const parts = [`${dim('model')} ${receipt.model || '?'}`, ...extra, `${dim('cost')} ${money(receipt.cost_usd)}`];
+  if (receipt.cache) parts.push(`${dim('cache')} ${receipt.cache}`);
+  process.stderr.write(dim('- ') + parts.join(dim('  -  ')) + '\n');
+  if (receipt.cost_usd === null) {
+    process.stderr.write(dim('  the Lobstack API could not price this call, so no cost is claimed\n'));
+  }
+  if (receipt.request_id) process.stderr.write(dim(`  request ${receipt.request_id}\n`));
+}
+
+async function cmdEmbed(args, flags) {
+  const text = args.join(' ').trim() || (!process.stdin.isTTY ? (await readAll(process.stdin)).trim() : '');
+  if (!text) fail('nothing to embed.', 'lobstack embed "your text here", or pipe it in on stdin.');
+  const dimensions = flags.dimensions !== undefined ? Number(flags.dimensions) : undefined;
+  if (dimensions !== undefined && !(Number.isInteger(dimensions) && dimensions > 0)) {
+    fail('--dimensions must be a positive integer.');
+  }
+
+  const { body, receipt } = await embed(base(flags), requireKey(flags), {
+    input: text,
+    model: flags.model,
+    dimensions,
+    clientTag: flags.tag,
+  });
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ...body, x_lobstack: receipt }, null, 2) + '\n');
+    return;
+  }
+  const vec = body?.data?.[0]?.embedding;
+  const len = Array.isArray(vec) ? vec.length : null;
+  process.stdout.write(
+    `${len ?? '?'} dimensions` +
+      (Array.isArray(vec) ? `  [${vec.slice(0, 4).map((v) => Number(v).toFixed(4)).join(', ')}, ...]` : '') +
+      `\n${dim('Use --json for the full vector.')}\n`,
+  );
+  headerReceipt(receipt, body?.usage ? [`${dim('tokens')} ${body.usage.prompt_tokens}`] : []);
+}
+
+/* ── search ────────────────────────────────────────────────────────────── */
+
+async function cmdSearch(args, flags) {
+  const query = args.join(' ').trim();
+  if (!query) fail('nothing to search for.', 'lobstack search "your query here"');
+  const count = flags.count !== undefined ? Number(flags.count) : undefined;
+  if (count !== undefined && !(Number.isInteger(count) && count >= 1 && count <= 10)) {
+    fail('--count must be an integer from 1 to 10.');
+  }
+
+  const { body, receipt } = await search(base(flags), requireKey(flags), { query, count, clientTag: flags.tag });
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ...body, x_lobstack: receipt }, null, 2) + '\n');
+    return;
+  }
+  const results = Array.isArray(body?.results) ? body.results : [];
+  if (!results.length) process.stdout.write('No results.\n');
+  results.forEach((r, i) => {
+    // Titles and snippets are third-party text headed for a terminal: escapes
+    // are removed, as they are from model output.
+    const clean = (v) => sanitize(String(v ?? '')).replace(/\s+/g, ' ').trim();
+    process.stdout.write(`${i + 1}. ${bold(clean(r.title))}\n   ${clean(r.url)}\n`);
+    if (r.snippet) process.stdout.write(`   ${dim(clean(r.snippet))}\n`);
+  });
+  headerReceipt(receipt, [`${dim('results')} ${results.length}`]);
 }
 
 /* ── tui ───────────────────────────────────────────────────────────────── */
@@ -317,6 +441,12 @@ try {
       break;
     case 'chat':
       await cmdChat(rest, flags);
+      break;
+    case 'embed':
+      await cmdEmbed(rest, flags);
+      break;
+    case 'search':
+      await cmdSearch(rest, flags);
       break;
     case 'models':
       await cmdModels(flags);
