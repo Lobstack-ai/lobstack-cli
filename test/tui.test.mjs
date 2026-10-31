@@ -591,7 +591,7 @@ test('the UI streams an answer split mid-frame, and prices it', async () => {
 
 test('bare `lobstack` in a pipeline still prints help, not a UI', async () => {
   const { stdout } = await run('node', [CLI], { env: { ...process.env, ...ENV } });
-  assert.match(stdout, /one key, every model/);
+  assert.match(stdout, /one key for Anthropic, OpenAI, Google and xAI models/);
   assert.match(stdout, /lobstack init/);
   assert.equal(stdout.includes(ESC), false);
 });

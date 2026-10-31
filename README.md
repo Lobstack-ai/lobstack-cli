@@ -1,7 +1,7 @@
 # lobstack
 
-The Lobstack API from your terminal: one key for five model providers, and what
-each call cost.
+The Lobstack API from your terminal: one key for models from Anthropic, OpenAI,
+Google and xAI, plus embeddings and web search, and what each call cost.
 
 ```bash
 npx lobstack init
@@ -102,12 +102,64 @@ your shell reading mouse packets as keystrokes. Nothing here needs a mouse.
 |---|---|
 | `lobstack init` | Save a key to `~/.lobstack/config.json`, mode 0600. Verifies it before writing. |
 | `lobstack chat "<prompt>"` | One call, streamed. Answer to stdout, receipt to stderr, so `> out.txt` gives you the answer alone. |
-| `lobstack models` | What the API will serve, with prices. `auto` — Nex 1 — leads the list with no price of its own. Also public at <https://www.lobstack.ai/models>. |
-| `lobstack spend [--days 7]` | What you have spent: the billing ledger's total, the same figure the Console shows, with routing savings as two separate figures. Needs a key with the `usage:read` scope. |
+| `lobstack embed "<text>"` | One embeddings call. Prints the vector length and the first few values; `--json` prints the whole response. Text can also come in on stdin. |
+| `lobstack search "<query>"` | One web search. Prints title, URL and snippet per result. Priced per search, not per token. |
+| `lobstack models` | What the API will serve, with prices per million tokens. `auto` — Nex 1, the router — leads the list with no price of its own; embedding models are listed last and labelled `embedding`. Also public at <https://www.lobstack.ai/models>. |
+| `lobstack spend` | What you have spent: the billing ledger's total, the same figure the Console shows, with routing savings as two separate figures. Needs a key with the `usage:read` scope. |
 | `lobstack proxy [--port 8787]` | A local OpenAI-compatible endpoint. |
 
-Flags: `--model` (default `auto`, which is **Nex 1**, the router), `--key`, `--base`, `--json`, `--force`.
+### Options per command
+
+| | |
+|---|---|
+| `--model <id>` | `chat`: default `auto`, which is **Nex 1**, the router. `embed`: `text-embedding-3-small` (default; `auto` means the same) or `text-embedding-3-large`. |
+| `--dimensions <n>` | `embed`: shorten the vector. At most the model's own length (1536 small, 3072 large). |
+| `--count <n>` | `search`: results, 1 to 10. Default 5. Fewer may come back. |
+| `--range <r>` | `spend`: `month`, `1d`, `7d`, `14d`, `30d`, `90d` or `365d`. Default `7d`. `month` is the UTC calendar month to date, the Console's default. A window longer than your plan's history starts where the history does. |
+| `--days <n>` | `spend`: shorthand for `--range <n>d`. A number the API does not serve is refused rather than silently answered as 7 days. |
+| `--group-by <g>` | `spend`: `day`, `model`, `key`, `agent`, `provider`, `mode`, `client` or `app`. Default `model`. `client` is the client tag; `app` is the calling application. |
+| `--client <tag>` | `spend`: only calls made for this client tag. `__untagged__` selects calls with none. |
+| `--tag <client>` | `chat`, `embed`, `search`: the client tag the call is for, sent as `x-lobstack-client-tag`. A tag set on the API key itself wins. |
+
+Global flags: `--key`, `--base`, `--json`, `--force`.
 `LOBSTACK_API_KEY` and `LOBSTACK_BASE_URL` win over the saved config.
+
+### What embed and search cost
+
+Both answer in one JSON body, so the price comes from the `x-lobstack-cost-usd`
+response header rather than a stream frame, and is printed on stderr the same
+way a chat receipt is. An empty header means the call could not be priced, and
+prints `unpriced`, never `$0`.
+
+- **Embeddings** are metered on input tokens at the model's rate
+  (`lobstack models` shows it). They run on OpenAI models only and are never
+  routed: vectors from different models are not comparable.
+- **Web search** is priced per search: Brave's published price inside your
+  plan's included usage and on the Free plan's credit, and that price times the
+  Lobstack rate past it. See <https://www.lobstack.ai/docs/gateway/search>. The
+  same query within ten minutes may come from a short cache; that answer says
+  `cache hit` and costs nothing.
+
+## Errors
+
+Every failure prints the API's message, the status, the error class and, where
+the API sent one, its `error_code`, then one line saying what to do:
+
+```
+error monthly allowance exhausted [402 quota ALLOWANCE_EXHAUSTED] (request 8f2b1e0c-...)
+  The plan allowance and credit are used. Top up or upgrade in Console > Billing.
+```
+
+| Class | Status | Retry? |
+|---|---|---|
+| `auth` | 401, 403 | No. Fix the key or its scopes. |
+| `quota` | 402, 429 | 402 no; 429 yes, after the `Retry-After` the hint quotes. |
+| `validation` | 400, 409, 422 | No. Fix the request. |
+| `provider` | 502, 503, other 5xx | Yes, with backoff. A search 503 `SEARCH_UNAVAILABLE` means use another search. |
+| `timeout` | 408, 504 | Yes. The first attempt may have completed. |
+| `internal` | 500 | Once, then report the request id. |
+
+The full list of codes is at <https://www.lobstack.ai/docs/gateway/errors>.
 
 ## The proxy
 

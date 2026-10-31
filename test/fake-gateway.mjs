@@ -66,6 +66,9 @@ const LONG_DELTAS = [
  * @param {boolean} [o.long]            the multi-paragraph answer
  * @param {boolean} [o.ledgerUnreadable] /api/v1/usage answers spend: null and
  *                                      savings: null, as when the ledger read fails
+ * @param {{status:number, body:object, headers?:object}} [o.fail]
+ *                                      answer every authenticated request with this error
+ * @param {boolean} [o.searchCached]    /search answers as a cache hit, cost 0
  * @param {number}  [o.slow]            ms between the two halves of the stream
  * @param {number}  [o.port]            fixed port; 0 (default) picks one
  */
@@ -75,14 +78,83 @@ export function startFakeGateway({
   noReceipt = false,
   long = false,
   ledgerUnreadable = false,
+  fail = null,
+  searchCached = false,
   slow = 10,
   port = 0,
 } = {}) {
+  /** What each request asked for, so a test can check the query string and body. */
+  const seen = [];
+  const readBody = (req) =>
+    new Promise((resolve) => {
+      let b = '';
+      req.on('data', (c) => (b += c));
+      req.on('end', () => {
+        try {
+          resolve(b ? JSON.parse(b) : null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+
   const server = createServer(async (req, res) => {
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer lsk_')) {
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'missing credentials' } }));
+      return;
+    }
+
+    const reqBody = req.method === "POST" ? await readBody(req) : null;
+    seen.push({ url: req.url, method: req.method, headers: req.headers, body: reqBody });
+
+    if (fail) {
+      res.writeHead(fail.status, { 'content-type': 'application/json', 'x-lobstack-request-id': 'req_err', ...(fail.headers || {}) });
+      res.end(JSON.stringify(fail.body));
+      return;
+    }
+
+    if (req.url?.endsWith('/embeddings')) {
+      const dims = reqBody?.dimensions || 1536;
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'x-lobstack-request-id': 'req_emb',
+        'x-lobstack-model': reqBody?.model && reqBody.model !== 'auto' ? reqBody.model : 'text-embedding-3-small',
+        'x-lobstack-cost-usd': '0.00000012',
+        'x-lobstack-priced': 'true',
+        'x-lobstack-metered': 'true',
+      });
+      res.end(
+        JSON.stringify({
+          object: 'list',
+          data: [{ object: 'embedding', index: 0, embedding: Array.from({ length: dims }, (_, i) => i / dims) }],
+          model: 'text-embedding-3-small',
+          usage: { prompt_tokens: 6, total_tokens: 6 },
+        }),
+      );
+      return;
+    }
+
+    if (req.url?.endsWith('/search')) {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'x-lobstack-request-id': 'req_search',
+        'x-lobstack-model': 'web-search',
+        'x-lobstack-cost-usd': searchCached ? '0.00000000' : '0.00500000',
+        'x-lobstack-priced': 'true',
+        'x-lobstack-cache': searchCached ? 'hit' : 'miss',
+      });
+      res.end(
+        JSON.stringify({
+          query: reqBody?.query,
+          results: [
+            // A title carrying an escape sequence: it must not reach the terminal.
+            { title: 'Rollbacks \u001b[2Jexplained', url: 'https://example.com/rollbacks', snippet: 'A deploy rolls back when...' },
+            { title: 'Health checks', url: 'https://example.com/health', snippet: '' },
+          ].slice(0, reqBody?.count ?? 5),
+        }),
+      );
       return;
     }
 
@@ -92,12 +164,14 @@ export function startFakeGateway({
         JSON.stringify({
           object: 'list',
           data: [
+            { id: 'auto', tier: 'router', owned_by: 'lobstack', price_per_mtok: null },
             { id: 'claude-haiku-4-5', tier: 'small', price_per_mtok: { input: 1, output: 5 } },
             { id: 'claude-opus-5', tier: 'flagship', price_per_mtok: { input: 5, output: 25 } },
-            { id: 'claude-fable-5-1', tier: 'frontier', price_per_mtok: { input: 9, output: 45 } },
+            { id: 'claude-fable-5-1', tier: 'flagship', price_per_mtok: { input: 9, output: 45 } },
             // No price at all. The listing has to render this without inventing
             // a zero, and the picker has to survive it.
-            { id: 'llama-4-scout-local', tier: 'open', price_per_mtok: {} },
+            { id: 'gpt-6-luna-unpriced', tier: 'nano', price_per_mtok: {} },
+            { id: 'text-embedding-3-small', type: 'embedding', owned_by: 'openai', dimensions: 1536, price_per_mtok: { input: 0.02, output: 0 } },
           ],
         }),
       );
@@ -112,8 +186,8 @@ export function startFakeGateway({
         // shows) disagree on purpose, so printing the wrong one fails a test.
         JSON.stringify({
           enabled: true,
-          range: '7d',
-          group_by: 'model',
+          range: new URL(req.url, 'http://x').searchParams.get('range') || '7d',
+          group_by: new URL(req.url, 'http://x').searchParams.get('group_by') || 'day',
           summary: { requests: 3, errors: 0, cost_usd: 0.0033, unpriced_requests: 0 },
           spend: ledgerUnreadable
             ? null
@@ -184,7 +258,7 @@ export function startFakeGateway({
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
       const addr = server.address();
-      resolve({ url: `http://127.0.0.1:${addr.port}`, port: addr.port, close: () => server.close() });
+      resolve({ url: `http://127.0.0.1:${addr.port}`, port: addr.port, seen, close: () => server.close() });
     });
   });
 }
