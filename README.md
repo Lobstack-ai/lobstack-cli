@@ -1,4 +1,11 @@
-# lobstack
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://www.lobstack.ai/brand/lobstack-mark-light-128.png">
+    <img src="https://www.lobstack.ai/brand/lobstack-mark-128.png" alt="Lobstack" width="44">
+  </picture>
+</p>
+
+# lobstack-cli
 
 The Lobstack API from your terminal: one key for models from Anthropic, OpenAI,
 Google and xAI, plus embeddings and web search, and what each call cost.
@@ -7,6 +14,13 @@ Google and xAI, plus embeddings and web search, and what each call cost.
 npx lobstack init
 npx lobstack             # the UI
 ```
+
+The npm package is `lobstack`, and the command is `lobstack`. Node 20 or newer.
+No dependencies.
+
+> npm has `lobstack` 0.1.3 today. `embed`, `search`, the `spend` windows and
+> the error classes below are in 0.2.0 in this repository, which is not
+> published yet.
 
 ```
  lobstack  auto                             2 calls  $0.002200  saved $0.008800
@@ -234,8 +248,36 @@ Three rules follow, and they hold on every screen:
   separate running totals that are never added together.
 - No figure is ever truncated to fit.
 
+## Configuration
+
+| | |
+|---|---|
+| `~/.lobstack/config.json` | Where `lobstack init` saves the key, mode 0600. |
+| `LOBSTACK_API_KEY` | The key. Wins over the saved config. |
+| `LOBSTACK_BASE_URL` | The site the CLI talks to. Default `https://www.lobstack.ai`; the API itself is at `https://www.lobstack.ai/api/gateway/v1`. |
+| `LOBSTACK_ASCII=1` | Draw with plain ASCII. |
+| `NO_COLOR` | No colour escapes. |
+
 ## Get a key
 
-<https://www.lobstack.ai/start> — free, no card, about a minute.
+<https://www.lobstack.ai/start>. A new, verified account gets $5 of credit for
+30 days to start, with no card and no monthly plan needed.
 
-MIT.
+## Development
+
+```bash
+node src/index.mjs --help
+npm test        # node --test against a fake gateway
+```
+
+A `v*` tag publishes to npm from CI.
+
+## License
+
+MIT
+
+## Links
+
+- [lobstack.ai](https://www.lobstack.ai)
+- [CLI docs](https://www.lobstack.ai/docs/cli) · [API docs](https://www.lobstack.ai/docs/gateway) · [Docs](https://www.lobstack.ai/docs)
+- [Download the Lobstack app](https://www.lobstack.ai/download)
